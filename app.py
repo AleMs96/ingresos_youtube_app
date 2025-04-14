@@ -1,23 +1,24 @@
 import pandas as pd
+import streamlit as st
 import plotly.express as px
 from io import BytesIO
 import openpyxl
-from openpyxl.drawing.image import Image
-from openpyxl.styles import PatternFill, Alignment, Border, Side, NamedStyle
-import streamlit as st
+from openpyxl.styles import Alignment, Border, Side
 
-# Cargar los archivos subidos
+# Título de la app
 st.title("📊 Resumen de ingresos mensuales de YouTube")
 
+# Subir archivos .csv o .xlsx
 uploaded_files = st.file_uploader(
-    "Subí tus archivos (.csv o .xlsx) de varios canales",
+    "Sube tus archivos (.csv o .xlsx) de varios canales",
     type=["csv", "xlsx"],
     accept_multiple_files=True
 )
 
 if uploaded_files:
     dataframes = []
-
+    
+    # Leer y procesar archivos
     for uploaded_file in uploaded_files:
         filename = uploaded_file.name
         if filename.endswith('.csv'):
@@ -25,92 +26,102 @@ if uploaded_files:
         elif filename.endswith('.xlsx'):
             df = pd.read_excel(uploaded_file)
 
-        df['Canal'] = filename.rsplit('.', 1)[0]
-        df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
-        df = df.dropna(subset=['Fecha', 'Ingresos estimados (USD)'])
+        df['Canal'] = filename.rsplit('.', 1)[0]  # Añadir nombre del canal
+        df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')  # Convertir a fecha
+        df = df.dropna(subset=['Fecha', 'Ingresos estimados (USD)'])  # Eliminar filas con valores nulos
         dataframes.append(df)
 
+    # Concatenar todos los dataframes en uno solo
     df_total = pd.concat(dataframes)
+
+    # Crear columna de mes
     df_total['Mes'] = df_total['Fecha'].dt.to_period('M').dt.to_timestamp()
 
-    # Resumen mensual
+    # Resumen mensual (todos los canales)
     resumen_mensual = df_total.groupby('Mes')['Ingresos estimados (USD)'].sum().reset_index()
 
     # Resumen por canal
-    resumen_por_canal = df_total.groupby(['Canal', 'Mes'])['Ingresos estimados (USD)'].sum().reset_index()
+    resumen_canal = df_total.groupby(['Canal', 'Mes'])['Ingresos estimados (USD)'].sum().reset_index()
 
-    # Crear gráfico de línea
-    fig = px.line(resumen_mensual, x='Mes', y='Ingresos estimados (USD)', title="Ingresos por mes")
+    # Resumen anual (por año)
+    df_total['Año'] = df_total['Fecha'].dt.year
+    resumen_anual = df_total.groupby('Año')['Ingresos estimados (USD)'].sum().reset_index()
 
-    # Guardar gráfico como imagen
-    img_bytes = fig.to_image(format="png")
+    # Mostrar resúmenes en Streamlit
+    st.subheader("🗓️ Ingresos por mes (todos los canales)")
+    st.dataframe(resumen_mensual)
 
-    # Crear el archivo Excel
+    st.subheader("📈 Ingresos por canal (por mes)")
+    st.dataframe(resumen_canal)
+
+    st.subheader("📅 Ingresos anuales")
+    st.dataframe(resumen_anual)
+
+    # Crear gráfico de ingresos por mes (todos los canales)
+    fig = px.line(resumen_mensual, x='Mes', y='Ingresos estimados (USD)', 
+                  title='Ingresos mensuales totales por todos los canales')
+    st.plotly_chart(fig)
+
+    # Crear gráfico de ingresos por canal (mensual)
+    fig_canal = px.line(resumen_canal, x='Mes', y='Ingresos estimados (USD)', color='Canal',
+                        title='Ingresos mensuales por canal')
+    st.plotly_chart(fig_canal)
+
+    # Crear gráfico de ingresos anuales
+    fig_anual = px.bar(resumen_anual, x='Año', y='Ingresos estimados (USD)', 
+                       title='Ingresos anuales totales por todos los canales')
+    st.plotly_chart(fig_anual)
+
+    # Descargar resumen como Excel
     output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
         resumen_mensual.to_excel(writer, index=False, sheet_name="Resumen Mensual")
-        resumen_por_canal.to_excel(writer, index=False, sheet_name="Resumen por Canal")
-        
-        # Obtener el libro de trabajo
+        resumen_canal.to_excel(writer, index=False, sheet_name="Resumen por Canal")
+        resumen_anual.to_excel(writer, index=False, sheet_name="Resumen Anual")
+
+        # Obtener el workbook
         workbook = writer.book
-        worksheet = workbook["Resumen Mensual"]
+        worksheet1 = workbook["Resumen Mensual"]
+        worksheet2 = workbook["Resumen por Canal"]
+        worksheet3 = workbook["Resumen Anual"]
 
-        # Insertar el gráfico como imagen
-        img = Image(BytesIO(img_bytes))
-        img.width = 800  # Tamaño de la imagen (ajustar según lo necesites)
-        img.height = 600
-        worksheet.add_image(img, "E5")  # Colocar la imagen en la celda E5
+        # Formato de las celdas en las hojas
+        for worksheet in [worksheet1, worksheet2, worksheet3]:
+            for col in worksheet.columns:
+                max_length = 0
+                column = col[0].column_letter  # Obtener la letra de la columna
+                for cell in col:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(cell.value)
+                    except:
+                        pass
+                adjusted_width = (max_length + 2)
+                worksheet.column_dimensions[column].width = adjusted_width
 
-        # Estilo para el formato de dinero
-        money_style = NamedStyle(name="money_style", number_format='"$"#,##0.00')
-        if "Ingresos estimados (USD)" in resumen_mensual.columns:
-            # Aplicar el formato a la columna de ingresos
-            for row in worksheet.iter_rows(min_row=2, min_col=2, max_col=2):  # Columna de "Ingresos estimados (USD)"
+            # Formato de celdas (alineación, borde, formato de número)
+            for row in worksheet.iter_rows():
                 for cell in row:
-                    cell.style = money_style
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                    cell.border = Border(
+                        left=Side(border_style="thin"),
+                        right=Side(border_style="thin"),
+                        top=Side(border_style="thin"),
+                        bottom=Side(border_style="thin")
+                    )
 
-        # Darle formato a las celdas de la tabla
-        header_fill = PatternFill(start_color="D9EAD3", end_color="D9EAD3", fill_type="solid")  # Color verde claro
-        header_alignment = Alignment(horizontal="center", vertical="center")  # Centrar texto
-        border = Border(
-            top=Side(style='thin'),
-            bottom=Side(style='thin'),
-            left=Side(style='thin'),
-            right=Side(style='thin')
-        )
+            # Formato de número de ingresos como dinero (USD)
+            if worksheet == worksheet1 or worksheet == worksheet2 or worksheet == worksheet3:
+                for row in worksheet.iter_rows(min_row=2, min_col=2, max_col=2):
+                    for cell in row:
+                        cell.number_format = '"$"#,##0.00'
 
-        # Formato para las cabeceras
-        for col in worksheet.columns:
-            for cell in col:
-                cell.border = border
-                if cell.row == 1:  # Es la cabecera
-                    cell.fill = header_fill
-                    cell.alignment = header_alignment
+    output.seek(0)
 
-        # Ajustar ancho de las columnas
-        column_widths = [max(len(str(cell.value)) for cell in col) for col in worksheet.columns]
-        for i, col in enumerate(worksheet.columns):
-            worksheet.column_dimensions[openpyxl.utils.get_column_letter(i+1)].width = column_widths[i] + 2  # Ajustar el ancho
+    st.download_button(
+        label="⬇️ Descargar resumen en Excel",
+        data=output.getvalue(),
+        file_name="resumen_ingresos.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
-        # Formatear la fecha en "Mes-Año"
-        for row in worksheet.iter_rows(min_row=2, min_col=1, max_col=1):  # Columna de "Mes"
-            for cell in row:
-                cell.number_format = '[$-C0A]mmm-aaaa'  # Formato "ene-2024"
-
-        # Resumen por canal
-        worksheet_canal = workbook["Resumen por Canal"]
-
-        # Aplicar formato similar para "Resumen por Canal"
-        for col in worksheet_canal.columns:
-            for cell in col:
-                cell.border = border
-                if cell.row == 1:  # Es la cabecera
-                    cell.fill = header_fill
-                    cell.alignment = header_alignment
-
-        # Ajustar ancho de las columnas en "Resumen por Canal"
-        column_widths_canal = [max(len(str(cell.value)) for cell in col) for col in worksheet_canal.columns]
-        for i, col in enumerate(worksheet_canal.columns):
-            worksheet_canal.column_dimensions[openpyxl.utils.get_column_letter(i+1)].width = column_widths_canal[i] + 2  # Ajustar el ancho
-
-        # Formatear la fecha en "Mes-Año" para "Resumen por Canal
