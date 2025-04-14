@@ -1,12 +1,12 @@
 import pandas as pd
-import streamlit as st
 import plotly.express as px
 from io import BytesIO
-from openpyxl import Workbook
-from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.styles import Font, Alignment
-from openpyxl.utils import get_column_letter
+import openpyxl
+from openpyxl.drawing.image import Image
+from openpyxl.styles import PatternFill, Alignment, Border, Side, NamedStyle
+import streamlit as st
 
+# Cargar los archivos subidos
 st.title("📊 Resumen de ingresos mensuales de YouTube")
 
 uploaded_files = st.file_uploader(
@@ -34,76 +34,55 @@ if uploaded_files:
     df_total['Mes'] = df_total['Fecha'].dt.to_period('M').dt.to_timestamp()
 
     resumen_mensual = df_total.groupby('Mes')['Ingresos estimados (USD)'].sum().reset_index()
-    resumen_mensual.columns = ['Mes/Año', 'Ingresos (USD)']
 
-    st.subheader("🗓️ Ingresos por mes (todos los canales)")
-    st.dataframe(resumen_mensual)
+    # Crear gráfico de línea
+    fig = px.line(resumen_mensual, x='Mes', y='Ingresos estimados (USD)', title="Ingresos por mes")
 
-    # 📈 Gráfico de línea
-    st.subheader("📈 Evolución de ingresos mensuales")
-    fig = px.line(resumen_mensual, x='Mes/Año', y='Ingresos (USD)', markers=True)
-    fig.update_layout(xaxis_title="Mes", yaxis_title="Ingresos (USD)", title="Ingresos por mes")
-    st.plotly_chart(fig, use_container_width=True)
+    # Guardar gráfico como imagen
+    img_bytes = fig.to_image(format="png")
 
-    # Crear libro Excel
-    wb = Workbook()
-
-    # Función para aplicar formato y agregar total
-    def agregar_hoja(df, titulo, ws=None, fecha_col=None):
-        if not ws:
-            ws = wb.create_sheet(title=titulo)
-        else:
-            ws.title = titulo
-
-        total_col_idx = df.shape[1]
-
-        for r_idx, row in enumerate(dataframe_to_rows(df, index=False, header=True), 1):
-            for c_idx, value in enumerate(row, 1):
-                cell = ws.cell(row=r_idx, column=c_idx, value=value)
-
-                if r_idx == 1:
-                    cell.font = Font(bold=True)
-                    cell.alignment = Alignment(horizontal='center')
-                elif fecha_col and c_idx == fecha_col:
-                    cell.number_format = "mmm-yyyy"
-                elif c_idx == total_col_idx:
-                    cell.number_format = '#,##0.00'
-
-        # Agregar total al final
-        total_row = ws.max_row + 1
-        ws.cell(row=total_row, column=total_col_idx - 1, value="TOTAL").font = Font(bold=True)
-        suma_formula = f"=SUM({get_column_letter(total_col_idx)}2:{get_column_letter(total_col_idx)}{total_row - 1})"
-        ws.cell(row=total_row, column=total_col_idx, value=suma_formula).font = Font(bold=True)
-
-        # Autoajuste columnas
-        for col in ws.columns:
-            max_length = max(len(str(cell.value)) if cell.value is not None else 0 for cell in col)
-            col_letter = get_column_letter(col[0].column)
-            ws.column_dimensions[col_letter].width = max_length + 2
-
-    # Hoja 1: Resumen mensual total
-    ws1 = wb.active
-    agregar_hoja(resumen_mensual, "Resumen mensual", ws=ws1, fecha_col=1)
-
-    # Hoja 2: Resumen anual
-    df_total['Año'] = df_total['Fecha'].dt.year
-    resumen_anual = df_total.groupby('Año')['Ingresos estimados (USD)'].sum().reset_index()
-    resumen_anual.columns = ['Año', 'Ingresos (USD)']
-    agregar_hoja(resumen_anual, "Resumen anual")
-
-    # Hoja 3: Por canal
-    resumen_canal = df_total.groupby(['Canal', 'Mes'])['Ingresos estimados (USD)'].sum().reset_index()
-    resumen_canal.columns = ['Canal', 'Mes/Año', 'Ingresos (USD)']
-    agregar_hoja(resumen_canal, "Por canal", fecha_col=2)
-
-    # Exportar a BytesIO
+    # Crear el archivo Excel
     output = BytesIO()
-    wb.save(output)
-    output.seek(0)
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        resumen_mensual.to_excel(writer, index=False, sheet_name="Resumen Mensual")
 
-    st.download_button(
-        label="⬇️ Descargar resumen completo en Excel",
-        data=output,
-        file_name="resumen_ingresos_completo.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        # Obtener el libro de trabajo
+        workbook = writer.book
+        worksheet = workbook["Resumen Mensual"]
+
+        # Insertar el gráfico como imagen
+        img = Image(BytesIO(img_bytes))
+        img.width = 800  # Tamaño de la imagen (ajustar según lo necesites)
+        img.height = 600
+        worksheet.add_image(img, "E5")  # Colocar la imagen en la celda E5
+
+        # Estilo para el formato de dinero
+        money_style = NamedStyle(name="money_style", number_format='"$"#,##0.00')
+        if "Ingresos estimados (USD)" in resumen_mensual.columns:
+            # Aplicar el formato a la columna de ingresos
+            for row in worksheet.iter_rows(min_row=2, min_col=2, max_col=2):  # Columna de "Ingresos estimados (USD)"
+                for cell in row:
+                    cell.style = money_style
+
+        # Darle formato a las celdas de la tabla
+        header_fill = PatternFill(start_color="D9EAD3", end_color="D9EAD3", fill_type="solid")  # Color verde claro
+        header_alignment = Alignment(horizontal="center", vertical="center")  # Centrar texto
+        border = Border(
+            top=Side(style='thin'),
+            bottom=Side(style='thin'),
+            left=Side(style='thin'),
+            right=Side(style='thin')
+        )
+
+        # Formato para las cabeceras
+        for col in worksheet.columns:
+            for cell in col:
+                cell.border = border
+                if cell.row == 1:  # Es la cabecera
+                    cell.fill = header_fill
+                    cell.alignment = header_alignment
+
+        # Ajustar ancho de las columnas
+        column_widths = [max(len(str(cell.value)) for cell in col) for col in worksheet.columns]
+        for i, col in enumerate(worksheet.columns):
+            worksheet.column_dimensions[openpyxl.utils.get_column_letter(i+1)].width_
