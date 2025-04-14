@@ -65,7 +65,15 @@ if uploaded_files:
         df_total.to_excel(writer, sheet_name='Detalles por canal', index=False)
 
         # Guardar archivo Excel
-        writer.save()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+    resumen_mensual_formateado.to_excel(writer, index=False, sheet_name="Resumen mensual")
+    resumen_anual.to_excel(writer, index=False, sheet_name="Resumen anual")
+    resumen_canal.to_excel(writer, index=False, sheet_name="Resumen por canal")
+
+    # TODO: formato de columnas aquí...
+
+# ¡Listo! Nada de writer.save()
+
 
     # Convertir gráficos a imagen con Kaleido y agregar a Excel
     img_bytes_total = fig_total.to_image(format="png")
