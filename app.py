@@ -1,25 +1,25 @@
 import pandas as pd
 import streamlit as st
+from io import BytesIO
 import plotly.express as px
+from openpyxl.styles import Font, Alignment, Border, Side, PatternFill, numbers
+from openpyxl.utils import get_column_letter
+from openpyxl import load_workbook
+from PIL import Image
 import plotly.io as pio
-import openpyxl
-from io import BytesIO
-from openpyxl.drawing.image import Image
-from io import BytesIO
 
-# Título de la app
+st.set_page_config(page_title="Ingresos YouTube", layout="centered")
 st.title("📊 Resumen de ingresos mensuales de YouTube")
 
-# Subir archivos
 uploaded_files = st.file_uploader(
-    "Sube tus archivos (.csv o .xlsx) de varios canales",
+    "Subí tus archivos (.csv o .xlsx) de varios canales",
     type=["csv", "xlsx"],
     accept_multiple_files=True
 )
 
 if uploaded_files:
     dataframes = []
-    
+
     for uploaded_file in uploaded_files:
         filename = uploaded_file.name
         if filename.endswith('.csv'):
@@ -27,101 +27,88 @@ if uploaded_files:
         elif filename.endswith('.xlsx'):
             df = pd.read_excel(uploaded_file)
 
-        # Añadir el nombre del canal
         df['Canal'] = filename.rsplit('.', 1)[0]
         df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
         df = df.dropna(subset=['Fecha', 'Ingresos estimados (USD)'])
         dataframes.append(df)
 
     df_total = pd.concat(dataframes)
-
-    # Creación de la columna de mes
     df_total['Mes'] = df_total['Fecha'].dt.to_period('M').dt.to_timestamp()
+    df_total['Año'] = df_total['Fecha'].dt.year
 
-    # Resumen mensual
     resumen_mensual = df_total.groupby('Mes')['Ingresos estimados (USD)'].sum().reset_index()
+    resumen_anual = df_total.groupby('Año')['Ingresos estimados (USD)'].sum().reset_index()
+    resumen_canal = df_total.groupby('Canal')['Ingresos estimados (USD)'].sum().reset_index()
 
-    # Crear gráficos
-    fig_total = px.line(resumen_mensual, x='Mes', y='Ingresos estimados (USD)', 
-                        title="Ingresos mensuales totales (todos los canales)")
-    fig_total.update_xaxes(type='category')
+    # Gráfico de línea
+    fig = px.line(resumen_mensual, x="Mes", y="Ingresos estimados (USD)", title="📈 Evolución mensual de ingresos")
+    st.plotly_chart(fig)
 
-    fig_canal = px.line(df_total, x='Mes', y='Ingresos estimados (USD)', color='Canal',
-                        title="Ingresos mensuales por canal")
-    fig_canal.update_xaxes(type='category')
+    # Mostrar tablas
+    st.subheader("🗓️ Ingresos por mes (todos los canales)")
+    st.dataframe(resumen_mensual)
 
-    fig_anual = px.bar(resumen_mensual, x='Mes', y='Ingresos estimados (USD)', 
-                       title="Ingresos anuales totales (todos los canales)")
+    st.subheader("📅 Ingresos por año")
+    st.dataframe(resumen_anual)
 
-    # Mostrar los gráficos en Streamlit
-    st.plotly_chart(fig_total)
-    st.plotly_chart(fig_canal)
-    st.plotly_chart(fig_anual)
+    st.subheader("📺 Ingresos por canal")
+    st.dataframe(resumen_canal)
 
-    # Descargar resumen como Excel
+    # Generar Excel
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        resumen_mensual.to_excel(writer, sheet_name='Resumen mensual', index=False)
-        df_total.to_excel(writer, sheet_name='Detalles por canal', index=False)
+        resumen_mensual.to_excel(writer, index=False, sheet_name="Resumen mensual")
+        resumen_anual.to_excel(writer, index=False, sheet_name="Resumen anual")
+        resumen_canal.to_excel(writer, index=False, sheet_name="Resumen por canal")
 
-        # Guardar archivo Excel
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-    resumen_mensual_formateado.to_excel(writer, index=False, sheet_name="Resumen mensual")
-    resumen_anual.to_excel(writer, index=False, sheet_name="Resumen anual")
-    resumen_canal.to_excel(writer, index=False, sheet_name="Resumen por canal")
+        workbook = writer.book
 
-    # TODO: formato de columnas aquí...
+        def estilizar_hoja(sheet_name, formato_fecha=False, col_dinero=2):
+            ws = writer.sheets[sheet_name]
+            thin_border = Border(
+                left=Side(style='thin'), right=Side(style='thin'),
+                top=Side(style='thin'), bottom=Side(style='thin')
+            )
+            for row in ws.iter_rows():
+                for cell in row:
+                    cell.border = thin_border
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                    if cell.row == 1:
+                        cell.font = Font(bold=True, color="FFFFFF")
+                        cell.fill = PatternFill(start_color="4F81BD", fill_type="solid")
 
-# ¡Listo! Nada de writer.save()
+            if formato_fecha:
+                for cell in ws["A"][1:]:
+                    cell.number_format = "mmm-yyyy"
 
+            for row in ws.iter_rows(min_row=2, min_col=col_dinero, max_col=col_dinero):
+                for cell in row:
+                    cell.number_format = '"$"#,##0.00'
 
-    # Convertir gráficos a imagen con Kaleido y agregar a Excel
-    img_bytes_total = fig_total.to_image(format="png")
-    img_bytes_canal = fig_canal.to_image(format="png")
-    img_bytes_anual = fig_anual.to_image(format="png")
+            for i, column_cells in enumerate(ws.iter_cols(1, ws.max_column)):
+                max_length = max(len(str(cell.value)) if cell.value else 0 for cell in column_cells)
+                col_letter = get_column_letter(i + 1)
+                ws.column_dimensions[col_letter].width = max_length + 4
 
-    # Escribir la imagen en Excel
-    wb = openpyxl.load_workbook(output)
-    ws = wb['Resumen mensual']
+        estilizar_hoja("Resumen mensual", formato_fecha=True)
+        estilizar_hoja("Resumen anual")
+        estilizar_hoja("Resumen por canal")
 
-    # Insertar imagenes en celdas de Excel
-    img_total = Image(BytesIO(img_bytes_total))
-    img_canal = Image(BytesIO(img_bytes_canal))
-    img_anual = Image(BytesIO(img_bytes_anual))
+        # Insertar gráfico como imagen (nueva hoja)
+        img_bytes = fig.to_image(format="png")
+        img_stream = BytesIO(img_bytes)
+        img = Image.open(img_stream)
 
-    ws.add_image(img_total, 'F2')
-    ws.add_image(img_canal, 'F20')
-    ws.add_image(img_anual, 'F40')
+        from openpyxl.drawing.image import Image as XLImage
+        chart_sheet = workbook.create_sheet("Gráfico")
+        img_path = "/tmp/grafico_ingresos.png"
+        img.save(img_path)
+        xl_img = XLImage(img_path)
+        chart_sheet.add_image(xl_img, "B2")
 
-    # Ajustar el formato de las columnas
-    for col in ws.columns:
-        max_length = 0
-        column = col[0].column_letter
-        for cell in col:
-            try:
-                if len(str(cell.value)) > max_length:
-                    max_length = len(cell.value)
-            except:
-                pass
-        adjusted_width = (max_length + 2)
-        ws.column_dimensions[column].width = adjusted_width
-
-    # Formato de la fecha en "ene-2024"
-    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=1):
-        for cell in row:
-            cell.number_format = '[$-F400]mmm-yy'
-
-    # Formato de las celdas de ingresos como moneda
-    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=2, max_col=2):
-        for cell in row:
-            cell.number_format = '"$"#,##0.00'
-
-    # Generar archivo final
-    final_output = BytesIO()
-    wb.save(final_output)
     st.download_button(
-        label="⬇️ Descargar resumen con gráficos en Excel",
-        data=final_output.getvalue(),
-        file_name="resumen_ingresos_con_graficos.xlsx",
+        label="⬇️ Descargar resumen en Excel con gráfico",
+        data=output.getvalue(),
+        file_name="resumen_ingresos_youtube.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
