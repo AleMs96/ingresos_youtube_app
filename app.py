@@ -33,7 +33,11 @@ if uploaded_files:
     df_total = pd.concat(dataframes)
     df_total['Mes'] = df_total['Fecha'].dt.to_period('M').dt.to_timestamp()
 
+    # Resumen mensual
     resumen_mensual = df_total.groupby('Mes')['Ingresos estimados (USD)'].sum().reset_index()
+
+    # Resumen por canal
+    resumen_por_canal = df_total.groupby(['Canal', 'Mes'])['Ingresos estimados (USD)'].sum().reset_index()
 
     # Crear gráfico de línea
     fig = px.line(resumen_mensual, x='Mes', y='Ingresos estimados (USD)', title="Ingresos por mes")
@@ -45,7 +49,8 @@ if uploaded_files:
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         resumen_mensual.to_excel(writer, index=False, sheet_name="Resumen Mensual")
-
+        resumen_por_canal.to_excel(writer, index=False, sheet_name="Resumen por Canal")
+        
         # Obtener el libro de trabajo
         workbook = writer.book
         worksheet = workbook["Resumen Mensual"]
@@ -87,12 +92,25 @@ if uploaded_files:
         for i, col in enumerate(worksheet.columns):
             worksheet.column_dimensions[openpyxl.utils.get_column_letter(i+1)].width = column_widths[i] + 2  # Ajustar el ancho
 
-    # Descargar archivo Excel con el gráfico
-    st.subheader("📥 Descargar el resumen con el gráfico")
-    st.download_button(
-        label="⬇️ Descargar resumen con gráfico en Excel",
-        data=output.getvalue(),
-        file_name="resumen_ingresos_con_grafico.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        # Formatear la fecha en "Mes-Año"
+        for row in worksheet.iter_rows(min_row=2, min_col=1, max_col=1):  # Columna de "Mes"
+            for cell in row:
+                cell.number_format = '[$-C0A]mmm-aaaa'  # Formato "ene-2024"
 
+        # Resumen por canal
+        worksheet_canal = workbook["Resumen por Canal"]
+
+        # Aplicar formato similar para "Resumen por Canal"
+        for col in worksheet_canal.columns:
+            for cell in col:
+                cell.border = border
+                if cell.row == 1:  # Es la cabecera
+                    cell.fill = header_fill
+                    cell.alignment = header_alignment
+
+        # Ajustar ancho de las columnas en "Resumen por Canal"
+        column_widths_canal = [max(len(str(cell.value)) for cell in col) for col in worksheet_canal.columns]
+        for i, col in enumerate(worksheet_canal.columns):
+            worksheet_canal.column_dimensions[openpyxl.utils.get_column_letter(i+1)].width = column_widths_canal[i] + 2  # Ajustar el ancho
+
+        # Formatear la fecha en "Mes-Año" para "Resumen por Canal
