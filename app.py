@@ -85,4 +85,14 @@ if uploaded_files:
         # Ajustar ancho de las columnas
         column_widths = [max(len(str(cell.value)) for cell in col) for col in worksheet.columns]
         for i, col in enumerate(worksheet.columns):
-            worksheet.column_dimensions[openpyxl.utils.get_column_letter(i+1)].width_
+            worksheet.column_dimensions[openpyxl.utils.get_column_letter(i+1)].width = column_widths[i] + 2  # Ajustar el ancho
+
+    # Descargar archivo Excel con el gráfico
+    st.subheader("📥 Descargar el resumen con el gráfico")
+    st.download_button(
+        label="⬇️ Descargar resumen con gráfico en Excel",
+        data=output.getvalue(),
+        file_name="resumen_ingresos_con_grafico.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
